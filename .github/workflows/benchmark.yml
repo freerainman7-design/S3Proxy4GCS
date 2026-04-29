@@ -20,7 +20,7 @@ env:
   GAR_REGISTRY: us-east1-docker.pkg.dev/cbs-poctest/s3proxy
   K8S_NAMESPACE: s3proxy-e2e
   # Benchmark Job pod scheduling (must match k8s/benchmark-job.yaml nodeSelector)
-  BENCHMARK_NODE_POOL: benchmark-c4-pool
+  BENCHMARK_NODE_POOL: benchmark-c4-pool-new
 
 jobs:
   benchmark:

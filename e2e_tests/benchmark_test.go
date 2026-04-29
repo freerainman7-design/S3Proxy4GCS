@@ -380,8 +380,13 @@ func TestBenchmarkSuite(t *testing.T) {
 
 	// =======================================================================
 	// 4. Control Plane: PutBucketLifecycle load test
+	// GCS enforces ~1 QPS per bucket for metadata writes (bucket.Update).
+	// Running more than 1 concurrent goroutine against the same bucket will
+	// immediately saturate the GCS rate limit and produce 502 errors.
+	// We therefore cap concurrency at 1 for all control-plane scenarios.
 	// =======================================================================
-	t.Logf("=== PutBucketLifecycle (%d concurrent, %ds) ===", concurrency, durationSec)
+	lcConcurrency := 1
+	t.Logf("=== PutBucketLifecycle (%d concurrent [GCS metadata write limit], %ds) ===", lcConcurrency, durationSec)
 	t.Cleanup(func() {
 		client.DeleteBucketLifecycle(context.TODO(), &s3.DeleteBucketLifecycleInput{
 			Bucket: aws.String(bucket),
@@ -393,7 +398,7 @@ func TestBenchmarkSuite(t *testing.T) {
 	nsLC := NewNetworkSampler(time.Second)
 	nsLC.Start()
 
-	lcLR := runConcurrentLoad(concurrency, duration, func() error {
+	lcLR := runConcurrentLoad(lcConcurrency, duration, func() error {
 		_, err := client.PutBucketLifecycleConfiguration(context.TODO(), &s3.PutBucketLifecycleConfigurationInput{
 			Bucket: aws.String(bucket),
 			LifecycleConfiguration: &types.BucketLifecycleConfiguration{
@@ -417,7 +422,7 @@ func TestBenchmarkSuite(t *testing.T) {
 	after, _ = mc.Snapshot()
 	delta = ComputeDelta(before, after, wallClock)
 
-	lcResult := toBenchmarkResult("PutBucketLifecycle", "N/A", concurrency, lcLR, wallClock, delta, netStatsLC)
+	lcResult := toBenchmarkResult("PutBucketLifecycle", "N/A", lcConcurrency, lcLR, wallClock, delta, netStatsLC)
 	report.Results = append(report.Results, lcResult)
 	printBenchResult(t, lcResult)
 

@@ -24,8 +24,17 @@ spec:
         app: s3proxy
     spec:
       serviceAccountName: s3proxy
-      # Ensure s3proxy and benchmark pods land on different nodes
+      # Pin s3proxy to service node pools only, never on benchmark-dedicated nodes
       affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: cloud.google.com/gke-nodepool
+                    operator: In
+                    values:
+                      - c3d-pool
+                      - c4d-pool
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:

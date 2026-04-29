@@ -5,6 +5,10 @@ metadata:
   namespace: s3proxy-e2e
   labels:
     app: s3proxy
+  annotations:
+    # Enable container-native load balancing via NEG (required for GCE Ingress)
+    # NEG controller automatically syncs pod IP changes to the backend NEG
+    cloud.google.com/neg: '{"ingress": true}'
 spec:
   type: ClusterIP
   selector:

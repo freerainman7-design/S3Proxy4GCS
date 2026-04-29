@@ -37,7 +37,7 @@ spec:
       serviceAccountName: s3proxy
       # Pin benchmark workload to dedicated perf node pool (GKE)
       nodeSelector:
-        cloud.google.com/gke-nodepool: benchmark-c4-pool
+        cloud.google.com/gke-nodepool: benchmark-c4-pool-new
       # Ensure benchmark and s3proxy pods land on different nodes
       affinity:
         podAntiAffinity:
