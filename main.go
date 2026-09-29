@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	_ "net/http/pprof" // pprof handlers registered into http.DefaultServeMux, exposed on PPROFAddr when set.
@@ -229,6 +230,13 @@ func main() {
 			"bufferSize", config.Config.ProxyBufferSize)
 	}
 
+	// 预计算虚拟主机后缀，避免每次请求都做字符串拼接。
+	// 若 ProxyBaseDomain 未设置则为空字符串，director 内直接跳过虚拟主机转换。
+	baseDomainSuffix := ""
+	if bd := config.Config.ProxyBaseDomain; bd != "" {
+		baseDomainSuffix = "." + bd
+	}
+
 	// Shared Director and ModifyResponse applied to both proxies.
 	director := func(req *http.Request) {
 		// Virtual-hosted style -> path-style conversion.
@@ -238,16 +246,15 @@ func main() {
 		//   GET /bucket/key
 		// This allows SDK clients to use default virtual-hosted addressing
 		// without configuring path-style, enabling seamless S3-to-GCS migration.
-		if baseDomain := config.Config.ProxyBaseDomain; baseDomain != "" {
+		if baseDomainSuffix != "" {
 			host := req.Host
-			// Strip port if present (e.g., "bucket.domain:8080" -> "bucket.domain")
-			if idx := strings.LastIndex(host, ":"); idx != -1 {
-				host = host[:idx]
+			// 用 net.SplitHostPort 剥离端口，正确处理 IPv6 地址（如 [::1]:8080）。
+			// 若 host 不含端口，SplitHostPort 会返回错误，此时直接使用原始 host。
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
 			}
-			// Check if host ends with ".baseDomain"
-			suffix := "." + baseDomain
-			if strings.HasSuffix(host, suffix) {
-				bucket := strings.TrimSuffix(host, suffix)
+			if strings.HasSuffix(host, baseDomainSuffix) {
+				bucket := strings.TrimSuffix(host, baseDomainSuffix)
 				if bucket != "" {
 					req.URL.Path = "/" + bucket + req.URL.Path
 					// Also fix RawPath if set (supports URL-encoded keys)
@@ -282,7 +289,6 @@ func main() {
 		// 1. Storage Class Translation & x-id Stripping (Hybrid Data-Plane)
 		// Always re-sign: the Director changes Host from proxy to GCS,
 		// so the original SigV4 signature (signed for localhost) is invalid.
-		shouldResign := true
 
 		sc := req.Header.Get("x-amz-storage-class")
 		if sc != "" && sc != "STANDARD" {
@@ -295,19 +301,17 @@ func main() {
 			gcsSC, known := translateS3StorageClass(sc)
 			if known {
 				req.Header.Set("x-amz-storage-class", gcsSC)
-				shouldResign = true
 			}
 		}
 
 		// Detect x-id query parameter (Go SDK v2 specific tracking)
 		q := req.URL.Query()
-		if q.Get("x-id") != "" {
+		if xid := q.Get("x-id"); xid != "" {
 			if config.Config.DebugLogging {
-				slog.Debug("Detected x-id query parameter. Stripping and re-signing", "xId", q.Get("x-id"))
+				slog.Debug("Detected x-id query parameter. Stripping and re-signing", "xId", xid)
 			}
 			q.Del("x-id")
 			req.URL.RawQuery = q.Encode()
-			shouldResign = true
 		}
 
 		// Detect Accept-Encoding: identity (causes issues with GCS S3 API)
@@ -316,10 +320,9 @@ func main() {
 				slog.Debug("Detected Accept-Encoding: identity. Stripping and re-signing")
 			}
 			req.Header.Del("Accept-Encoding")
-			shouldResign = true
 		}
 
-		if shouldResign {
+		{
 			// Prefer per-request credentials resolved at handleS3Request time
 			// (the client's own AK/SK, looked up against the mapping store).
 			// Fall back to the legacy single-pair when the mapping is empty
